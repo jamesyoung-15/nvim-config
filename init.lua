@@ -85,6 +85,10 @@ do
   -- instead raise a dialog asking if you wish to save the current file(s)
   -- See `:help 'confirm'`
   vim.o.confirm = true
+
+  -- Load per-project config from a `.nvim.lua` file in the project directory (or its parents).
+  --  Nvim asks before running a new or changed file, see `:help 'exrc'` and `:help :trust`
+  vim.o.exrc = true
 end
 
 -- ============================================================
@@ -165,6 +169,24 @@ do
     group = vim.api.nvim_create_augroup('kickstart-highlight-yank', { clear = true }),
     callback = function() vim.hl.on_yank() end,
   })
+
+  -- [[ Filetype Detection ]]
+  --  Ansible files are plain YAML to Nvim, but `ansiblels` only attaches to the `yaml.ansible` filetype.
+  --  Patterns are Lua patterns matched against the full path (`%.` is a literal dot, `a?` an optional "a"),
+  --  and are checked before the file extension. See `:help vim.filetype.add()` and `:help lua-pattern`
+  --
+  --  Role `templates/` and `files/` are left alone, they hold plain YAML/Jinja rather than Ansible tasks.
+  --  For a project laid out differently, add more patterns in that project's `.nvim.lua` (see 'exrc' above).
+  vim.filetype.add {
+    pattern = {
+      ['.*/playbooks/.*%.ya?ml'] = 'yaml.ansible',
+      ['.*/roles/[^/]+/tasks/.*%.ya?ml'] = 'yaml.ansible',
+      ['.*/roles/[^/]+/handlers/.*%.ya?ml'] = 'yaml.ansible',
+      ['.*/roles/[^/]+/defaults/.*%.ya?ml'] = 'yaml.ansible',
+      ['.*/roles/[^/]+/vars/.*%.ya?ml'] = 'yaml.ansible',
+      ['.*/roles/[^/]+/meta/.*%.ya?ml'] = 'yaml.ansible',
+    },
+  }
 end
 
 -- ============================================================
@@ -648,19 +670,54 @@ do
   ---@type table<string, vim.lsp.Config>
   local servers = {
     -- clangd = {},
-    gopls = {},
+    -- Go: settings reference https://go.dev/gopls/settings
+    gopls = {
+      settings = {
+        gopls = {
+          staticcheck = true, -- Extra checks from staticcheck, built into gopls
+          analyses = {
+            unusedparams = true,
+            unusedvariable = true,
+            shadow = true, -- Warn when a variable shadows one from an outer scope (common `err` bug)
+          },
+          -- Shown when inlay hints are toggled on with <leader>th
+          hints = {
+            parameterNames = true,
+            assignVariableTypes = true,
+            compositeLiteralFields = true,
+            rangeVariableTypes = true,
+          },
+        },
+      },
+    },
     -- pyright = {},
     -- tsc = {},
 
-    -- right now trying basedpyright, will consider: ty, pyrefly
+    -- YAML: syntax errors, plus schema validation and completion for well-known files
+    --  (GitHub workflows, docker-compose, Kubernetes, ...) from https://www.schemastore.org
+    yamlls = {},
+
+    -- Ansible: completion, hover docs, and diagnostics from `ansible-lint`
+    --  Needs `ansible` and `ansible-lint` on PATH (installed outside Nvim, e.g. nix or `uv tool install`).
+    --  Only attaches to `yaml.ansible` files, see Filetype Detection in Section 2.
+    ansiblels = {},
+
+    -- Python: trying basedpyright and will consider ty, pyrefly
     basedpyright = {
       settings = {
         basedpyright = {
+          disableOrganizeImports = true, -- ruff handles import sorting
           analysis = {
             typeCheckingMode = 'standard',
           },
         },
       },
+    },
+    -- Python linting, formatting, and import sorting. Reads `[tool.ruff]` from the project's pyproject.toml
+    ruff = {
+      on_init = function(client)
+        client.server_capabilities.hoverProvider = false -- Hover docs come from basedpyright
+      end,
     },
     --
     -- Some languages (like rust) have entire language plugins that can be useful:
@@ -821,7 +878,7 @@ do
       -- <c-k>: Toggle signature help
       --
       -- See `:help blink-cmp-config-keymap` for defining your own keymap
-      preset = 'default',
+      preset = 'super-tab',
 
       -- For more advanced Luasnip keymaps (e.g. selecting choice nodes, expansion) see:
       --    https://github.com/L3MON4D3/LuaSnip?tab=readme-ov-file#keymaps
